@@ -1,0 +1,20 @@
+# Vagrant
+.vagrant/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+.vscode/
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# Kubernetes
+kubeconfig
+admin.conf
+.kube/
+*.pem
+*.key
