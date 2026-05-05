@@ -1,217 +1,146 @@
-# Kubernetes Cluster Setup (kubeadm) — Summary
+# Automated Kubernetes Cluster with Vagrant + Provisioning Scripts
 
-## Objective
+This setup automates the entire Kubernetes cluster initialization using Vagrant's provisioning system on Windows with VirtualBox.
 
-Set up a Kubernetes cluster from scratch with:
+## How It Works
 
-* 1 Control Plane node
-* 1 Worker node
+1. **Vagrantfile** - Defines VM resources and calls provisioning scripts
+2. **scripts/init-node.sh** - Common setup for both nodes (swap, kernel modules, containerd, kubeadm)
+3. **scripts/init-controlplane.sh** - Control plane specific (kubeadm init, Flannel CNI)
+4. **scripts/join-command.sh** - Generated during control plane init, used by worker node
 
----
+## Automation Flow
 
-## Environment
-
-* OS: Ubuntu 22.04 (Vagrant VMs)
-* Control Plane IP: 192.168.56.10
-* Worker Node IP: 192.168.56.11
-* Runtime: containerd
-* Kubernetes version: v1.36
-* Networking: Flannel CNI
-
----
-
-## Step 1 — VM Preparation
-
-On both nodes:
-
-* Disabled swap:
-
-  ```bash
-  sudo swapoff -a
-  ```
-
-* Enabled required kernel modules:
-
-  ```bash
-  sudo modprobe br_netfilter
-  ```
-
-* Made it persistent:
-
-  ```bash
-  echo "br_netfilter" | sudo tee /etc/modules-load.d/k8s.conf
-  ```
-
-* Configured sysctl:
-
-  ```bash
-  net.bridge.bridge-nf-call-iptables = 1
-  net.bridge.bridge-nf-call-ip6tables = 1
-  net.ipv4.ip_forward = 1
-  ```
-
----
-
-## Step 2 — Install containerd
-
-Installed container runtime:
-
-```bash
-sudo apt install -y containerd
+```
+vagrant up
+├── Create VMs (2 nodes)
+├── Run init-node.sh on both nodes
+│   ├── Disable swap
+│   ├── Load kernel modules
+│   ├── Install containerd
+│   └── Install kubeadm, kubelet, kubectl
+├── Run init-controlplane.sh on control plane
+│   ├── kubeadm init
+│   ├── Configure kubectl
+│   ├── Deploy Flannel CNI
+│   └── Generate join-command.sh
+└── Worker node joins cluster using join-command.sh
 ```
 
-Generated configuration:
+## Usage
+
+### Start cluster (fully automated)
 
 ```bash
-containerd config default | sudo tee /etc/containerd/config.toml
+cd c:\Users\user\k8s-cluster
+vagrant up
 ```
 
-Configured systemd cgroup driver:
+This will:
+1. Create 2 Ubuntu VMs
+2. Install all Kubernetes components
+3. Initialize the cluster
+4. Join the worker node automatically
 
-```toml
-SystemdCgroup = true
-```
-
-Restarted service:
+### Access nodes
 
 ```bash
-sudo systemctl restart containerd
-```
+# SSH into control plane
+vagrant ssh controlplane
 
----
+# SSH into worker
+vagrant ssh worker
 
-## Step 3 — Install Kubernetes Components
-
-Installed:
-
-* kubeadm
-* kubelet
-* kubectl
-
-Configured Kubernetes repository and installed packages:
-
-```bash
-sudo apt-get install -y kubelet kubeadm kubectl
-sudo apt-mark hold kubelet kubeadm kubectl
-```
-
----
-
-## Step 4 — Initialize Control Plane
-
-Executed on control plane node:
-
-```bash
-sudo kubeadm init \
-  --apiserver-advertise-address=192.168.56.10 \
-  --pod-network-cidr=10.244.0.0/16
-```
-
-Configured kubectl:
-
-```bash
-mkdir -p $HOME/.kube
-sudo cp /etc/kubernetes/admin.conf $HOME/.kube/config
-```
-
----
-
-## Step 5 — Install Network Plugin
-
-Deployed Flannel CNI:
-
-```bash
-kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
-```
-
----
-
-## Step 6 — Join Worker Node
-
-Used kubeadm join command generated during initialization:
-
-```bash
-kubeadm join <control-plane-ip>:6443 \
-  --token <token> \
-  --discovery-token-ca-cert-hash sha256:<hash>
-```
-
----
-
-## Step 7 — Verification
-
-Checked cluster status:
-
-```bash
+# Inside VM, verify cluster
 kubectl get nodes
-```
-
-Result:
-
-```
-controlplane   Ready
-worker         Ready
-```
-
-Checked system pods:
-
-```bash
 kubectl get pods -n kube-system
 ```
 
-All pods running successfully.
+### Destroy cluster
 
----
+```bash
+vagrant destroy -f
+```
 
-## Issues Encountered & Fixes
+## Configuration
 
-### 1. containerd package fetch error
+Edit `Vagrantfile` to customize:
+- VM memory/CPU
+- Network IPs (192.168.56.x)
+- Provisioning scripts
 
-* Cause: outdated apt cache
-* Fix: `sudo apt-get update`
+Edit `scripts/init-node.sh` or `scripts/init-controlplane.sh` for:
+- Kubernetes version
+- Pod network CIDR
+- Container runtime options
 
----
+## Benefits vs Manual Setup
 
-### 2. Flannel crashing
+✅ **Reproducible** - Identical setup every time  
+✅ **Documented** - Infrastructure as Code  
+✅ **Fast** - 5-10 minutes fully automated  
+✅ **Portable** - Works on any Windows machine with VirtualBox  
+✅ **Scalable** - Easy to add more worker nodes  
+✅ **Version-controlled** - Track all changes in Git  
 
-* Cause: missing `br_netfilter` kernel module
-* Fix:
+## Troubleshooting
 
-  * loaded module
-  * configured sysctl
+### Worker node fails to join
 
----
+```bash
+# Check if join command exists
+ls -la join-command.sh
 
-### 3. kubectl not working on worker
+# Manually run join on worker
+vagrant ssh worker
+bash /vagrant/join-command.sh
+```
 
-* Cause: missing kubeconfig
-* Fix: copied `admin.conf` manually
+### Flannel pods stuck
 
----
+```bash
+# Check logs on control plane
+vagrant ssh controlplane
+kubectl logs -n kube-flannel deployment/kube-flannel-ds
+```
 
-## Key Learnings
+### Reset and restart
 
-* Kubernetes depends heavily on Linux networking (iptables, bridges, kernel modules)
-* containerd must be configured with systemd cgroups
-* CNI plugins are mandatory for pod networking
-* kubeadm simplifies cluster setup but requires correct system preparation
+```bash
+vagrant destroy -f
+vagrant up
+```
 
----
+## Files
 
-## Final Result
+- `Vagrantfile` - VM and provisioning configuration
+- `scripts/init-node.sh` - Node initialization
+- `scripts/init-controlplane.sh` - Control plane setup
+- `join-command.sh` - Generated at runtime (worker join token)
 
-A fully functional Kubernetes cluster with:
+## Next Steps
 
-* 1 control plane node
-* 1 worker node
-* working pod networking
-* cluster in Ready state
+After cluster is running:
 
----
+```bash
+# Test cluster
+kubectl run test-pod --image=nginx
+kubectl get pods
 
-## Next Steps (optional improvements)
+# Deploy applications
+kubectl apply -f your-app.yaml
 
-* Deploy applications (e.g., Nginx)
-* Expose services (NodePort / ClusterIP)
-* Test inter-node pod communication
-* Experiment with other CNIs (Calico, Cilium)
+# Monitor
+kubectl logs -f test-pod
+kubectl describe pod test-pod
+```
+
+## Portfolio Value
+
+This demonstrates:
+- ✅ Infrastructure as Code (IaC)
+- ✅ Kubernetes cluster setup expertise
+- ✅ Linux system administration
+- ✅ Container orchestration
+- ✅ Automation and CI/CD thinking
+- ✅ Version control for infrastructure
